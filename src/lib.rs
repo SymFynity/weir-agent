@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod state;
+pub mod weir;
 
 #[cfg(test)]
 mod tests {

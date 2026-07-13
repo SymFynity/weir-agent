@@ -1,5 +1,6 @@
 // Module declarations are added by later tasks as each module is created.
 
+pub mod backend;
 pub mod config;
 pub mod state;
 pub mod weir;

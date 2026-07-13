@@ -50,7 +50,9 @@ async fn drains_backlog_across_cycles_and_persists() {
     };
     let mut state = AgentState::default();
 
-    // First cycle: forwards ids 1,2 (full batch -> more)
+    // First cycle: starting from a fresh (default, empty-generation) state,
+    // the agent adopts generation "gen-1" (its restart/bootstrap branch),
+    // fetches from since=0, and forwards ids 1,2 — a full batch, so `more`.
     assert_eq!(f.run_cycle(&mut state).await, CycleOutcome::Forwarded { count: 2, more: true });
     assert_eq!(state.cursor, 2);
     // Second cycle: forwards id 3 (partial -> done)

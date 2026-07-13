@@ -99,7 +99,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
     use serde_json::json;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     struct Harness {
@@ -201,20 +201,61 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generation_change_resets_cursor() {
-        // Weir restarted: stored generation gen-OLD/cursor 100, but Weir now
-        // reports gen-NEW with low ids. The agent must reset and forward from 0.
+    async fn generation_change_refetches_from_zero_not_the_stale_response() {
+        // Stored state points at gen-OLD/cursor=100. Weir now reports
+        // gen-NEW. The first fetch (since=100) and the refetch (since=0)
+        // return DIFFERENT bodies, so this test distinguishes a correct
+        // refetch-from-0 from a broken impl that reuses the stale response.
         let h = harness().await;
-        // First (since=100) and refetch (since=0) both hit the same mock,
-        // which always returns gen-NEW with a low id.
-        weir_returns(&h, "gen-NEW", json!([{"id": 2}])).await;
+        // First fetch at the stale cursor: announces the new generation, but
+        // its events must NOT be the ones forwarded (a broken impl would).
+        Mock::given(method("GET")).and(path("/events")).and(query_param("since", "100"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "generation": "gen-NEW", "events": [ {"id": 999} ]
+            })))
+            .mount(&h.weir).await;
+        // Refetch from 0: the real new-process events that SHOULD be forwarded.
+        Mock::given(method("GET")).and(path("/events")).and(query_param("since", "0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "generation": "gen-NEW", "events": [ {"id": 1}, {"id": 2} ]
+            })))
+            .mount(&h.weir).await;
         backend_accepts(&h).await;
+
         let f = forwarder(&h, 500);
         let mut state = AgentState { generation: "gen-OLD".into(), cursor: 100 };
 
         let outcome = f.run_cycle(&mut state).await;
-        assert_eq!(outcome, CycleOutcome::Forwarded { count: 1, more: false });
+        // Correct impl forwards the since=0 events (ids 1,2 -> cursor 2, count 2).
+        // A broken impl reusing the since=100 response would give cursor 999/count 1.
+        assert_eq!(outcome, CycleOutcome::Forwarded { count: 2, more: false });
         assert_eq!(state.generation, "gen-NEW");
         assert_eq!(state.cursor, 2);
+    }
+
+    #[tokio::test]
+    async fn generation_change_then_refetch_failure_persists_generation_and_fails() {
+        // Generation changed, but the refetch from 0 fails. The agent must
+        // persist the NEW generation + reset cursor (so it won't loop
+        // resetting) and return Failed.
+        let h = harness().await;
+        Mock::given(method("GET")).and(path("/events")).and(query_param("since", "100"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "generation": "gen-NEW", "events": [ {"id": 5} ]
+            })))
+            .mount(&h.weir).await;
+        Mock::given(method("GET")).and(path("/events")).and(query_param("since", "0"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&h.weir).await;
+
+        let f = forwarder(&h, 500);
+        let mut state = AgentState { generation: "gen-OLD".into(), cursor: 100 };
+
+        assert_eq!(f.run_cycle(&mut state).await, CycleOutcome::Failed);
+        // New generation adopted + cursor reset persisted, so the next cycle
+        // won't detect a "change" again and reset in a loop.
+        assert_eq!(state.generation, "gen-NEW");
+        assert_eq!(state.cursor, 0);
+        assert_eq!(AgentState::load(&h.state_file), AgentState { generation: "gen-NEW".into(), cursor: 0 });
     }
 }

@@ -2,6 +2,7 @@
 
 pub mod backend;
 pub mod config;
+pub mod forwarder;
 pub mod state;
 pub mod weir;
 

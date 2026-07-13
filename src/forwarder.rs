@@ -72,12 +72,19 @@ impl Forwarder {
             return CycleOutcome::Idle;
         }
         let count = events.len();
-        let more = count >= self.batch_size;
         match self.backend.ingest(&self.instance_id, &state.generation, &events).await {
             Ok(()) => {
-                if let Some(max_id) = max_event_id(&events) {
-                    state.cursor = max_id;
-                }
+                let advanced = match max_event_id(&events) {
+                    Some(max_id) => {
+                        state.cursor = max_id;
+                        true
+                    }
+                    None => {
+                        tracing::warn!("forwarded a batch with no numeric event ids; cursor not advanced");
+                        false
+                    }
+                };
+                let more = (count >= self.batch_size) && advanced;
                 if let Err(e) = state.save(&self.state_file) {
                     // Backend accepted but we failed to persist the cursor.
                     // Next run re-sends this batch; the backend dedupes on
@@ -93,6 +100,7 @@ impl Forwarder {
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -185,6 +193,22 @@ mod tests {
             f.run_cycle(&mut state).await,
             CycleOutcome::Forwarded { count: 2, more: true }
         );
+    }
+
+    #[tokio::test]
+    async fn full_batch_of_idless_events_does_not_signal_more() {
+        // A full batch (count == batch_size) whose events carry no numeric
+        // `id`: ingest succeeds but the cursor can't advance, so `more` must
+        // be false (otherwise main's drain loop would busy-spin re-fetching
+        // the same `since`).
+        let h = harness().await;
+        weir_returns(&h, "gen-1", json!([{"tenant": "a"}, {"tenant": "b"}])).await;
+        backend_accepts(&h).await;
+        let f = forwarder(&h, 2); // batch_size == 2 == returned count
+        let mut state = AgentState { generation: "gen-1".into(), cursor: 0 };
+        let outcome = f.run_cycle(&mut state).await;
+        assert_eq!(outcome, CycleOutcome::Forwarded { count: 2, more: false });
+        assert_eq!(state.cursor, 0); // unchanged (no id to advance to)
     }
 
     #[tokio::test]

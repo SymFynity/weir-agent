@@ -50,6 +50,8 @@ All configuration is via environment variables. See `weir-agent.example.env` for
 | `WEIR_AGENT_BATCH_SIZE` | No | `500` | Max events per backend POST |
 | `WEIR_AGENT_STATE_FILE` | No | `./weir-agent-state.json` | Path to persist cursor & generation |
 
+The directory containing `WEIR_AGENT_STATE_FILE` must already exist — the agent does not create it — and persist failures are logged only as warnings (not fatal), so run with logging enabled to notice them.
+
 Missing required variables cause a fatal startup error with a clear message.
 
 ## Running

@@ -2,6 +2,6 @@
 !docs/superpowers/
 /target/
 /.worktrees/
-weir-agent-state.json
+weir-agent-state.json*
 *.env
 !weir-agent.example.env

@@ -1,5 +1,7 @@
 // Module declarations are added by later tasks as each module is created.
 
+pub mod config;
+
 #[cfg(test)]
 mod tests {
     #[test]

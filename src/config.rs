@@ -38,6 +38,9 @@ impl Config {
             })?,
             None => 15,
         };
+        if poll_interval_secs == 0 {
+            return Err("WEIR_AGENT_POLL_INTERVAL_SECS must be greater than 0".to_string());
+        }
         let batch_size = match get("WEIR_AGENT_BATCH_SIZE") {
             Some(v) => v
                 .parse::<usize>()
@@ -127,5 +130,17 @@ mod tests {
         ]))
         .unwrap_err();
         assert!(err.contains("BATCH_SIZE"));
+    }
+
+    #[test]
+    fn zero_poll_interval_is_error() {
+        let err = Config::from_source(source(&[
+            ("WEIR_AGENT_BACKEND_URL", "https://b/i"),
+            ("WEIR_AGENT_ORG_KEY", "k"),
+            ("WEIR_AGENT_INSTANCE_ID", "i"),
+            ("WEIR_AGENT_POLL_INTERVAL_SECS", "0"),
+        ]))
+        .unwrap_err();
+        assert!(err.contains("POLL_INTERVAL"));
     }
 }

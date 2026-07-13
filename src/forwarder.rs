@@ -99,7 +99,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
     use serde_json::json;
-    use wiremock::matchers::{method, path, query_param};
+    use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     struct Harness {

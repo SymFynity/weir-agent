@@ -3,5 +3,6 @@
 /target/
 /.worktrees/
 weir-agent-state.json*
+state-*.json
 *.env
 !weir-agent.example.env

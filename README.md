@@ -1,116 +1,155 @@
 # weir-agent
 
-A lightweight Rust binary that polls a local Weir proxy instance and forwards per-request usage metadata to a hosted backend. One agent per Weir instance.
+A small Rust binary that polls a local [Weir](https://github.com/SymFynity/weir-proxy)
+instance and forwards per-request usage metadata to a backend. One agent per Weir
+instance.
 
-## What It Does
+Weir enforces budgets and policy on a single instance and keeps its event log in
+memory. weir-agent is what gets that data off the box — to
+[SymFynity](https://symfynity.com), or to any endpoint you point it at.
 
-weir-agent polls the Weir proxy's `/events` endpoint, collects batch usage events, and forwards them to a backend ingestion service. It forwards **metadata only** — tenant, provider, model, tool names, token counts, outcome, rule, and timestamp. It never includes prompt content, response content, or tool arguments.
+## What it sends — and what it never sends
 
-The agent is deliberately simple with no built-in alerting, aggregation, or policy logic; the backend is responsible for deduplication and further processing.
+weir-agent forwards **metadata only**: tenant, provider, model, tool *names*,
+token counts, outcome, rule, and timestamp.
 
-## How It Works
+It never sends prompt content, response content, or tool call arguments. Those
+never leave your Weir process, because Weir's `/events` endpoint does not expose
+them in the first place — there is nothing here to opt out of.
 
-### Poll Cycle
+This binary is open source so that claim is checkable rather than promised. It's
+about 800 lines of Rust; read it, build it, run your own.
 
-1. **Fetch**: GET `/events?since=<cursor>&limit=<batch_size>` from Weir.
-2. **Restart Detection**: If the response `generation` differs from the persisted one, Weir has restarted (and its event IDs reset). Reset the cursor to 0 and refetch from the beginning of the new process.
-3. **Ingest**: POST the batch to the backend with the instance ID, generation, and events.
-4. **Advance & Persist**: On 2xx response, update the cursor to the highest event ID in the batch and atomically persist `(generation, cursor)`. On failure, hold the cursor and retry next cycle.
+## Use it with your own backend
 
-### At-Least-Once Delivery
+Nothing about the agent is SymFynity-specific. It POSTs a documented JSON
+contract (see [Ingestion contract](#ingestion-contract)) to whatever
+`WEIR_AGENT_BACKEND_URL` names. Point it at your own collector and it works the
+same way.
 
-The agent guarantees at-least-once delivery of each event to the backend:
+The agent is deliberately simple: no alerting, no aggregation, no policy logic.
+It polls, forwards, and tracks a cursor. Everything else is the backend's job.
 
-- The cursor only advances after a successful (2xx) backend POST.
-- If the agent crashes after a successful ingest but before persisting the cursor, the batch is resent on restart.
-- The backend must deduplicate on `(instance_id, generation, event.id)` to achieve exactly-once semantics.
-- Events are lost only if the agent is offline long enough that they age out of Weir's bounded in-memory ring buffer.
+## Quick start
 
-### Persistence
+Requires a recent stable Rust toolchain, and a Weir instance to poll.
 
-State (generation and cursor) is persisted to a JSON file (`./weir-agent-state.json` by default, configurable). The file is updated atomically after each successful backend ingest.
+```bash
+git clone https://github.com/SymFynity/weir-agent
+cd weir-agent
+cargo build --release
 
-### Backoff & Drain
+cp weir-agent.example.env .env   # set BACKEND_URL, ORG_KEY, INSTANCE_ID
+set -a && source .env && set +a
+RUST_LOG=info ./target/release/weir-agent
+```
 
-- If a batch is full, the agent cycles immediately to check for more events (drain mode).
-- If the batch is empty or smaller than the batch size, the agent sleeps for the configured poll interval before the next cycle.
-- On transient failures (Weir or backend unreachable), the agent backs off to the interval sleep.
+The agent logs startup config and cycle outcomes to stderr, and shuts down
+gracefully on Ctrl+C or SIGTERM.
 
 ## Configuration
 
-All configuration is via environment variables. See `weir-agent.example.env` for a template.
+All configuration is via environment variables. See `weir-agent.example.env`
+for a template.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `WEIR_AGENT_BACKEND_URL` | Yes | — | Ingestion endpoint URL (e.g., `https://ingest.example.com/v1/ingest`) |
-| `WEIR_AGENT_ORG_KEY` | Yes | — | Bearer token for backend authentication (e.g., `sk-org-123`) |
-| `WEIR_AGENT_INSTANCE_ID` | Yes | — | Identifier for this Weir instance (e.g., `prod-us-east`); included in each ingest |
+| `WEIR_AGENT_BACKEND_URL` | Yes | — | Ingestion endpoint URL |
+| `WEIR_AGENT_ORG_KEY` | Yes | — | Bearer token for backend authentication |
+| `WEIR_AGENT_INSTANCE_ID` | Yes | — | Identifier for this Weir instance (e.g. `prod-us-east`) |
 | `WEIR_AGENT_EVENTS_URL` | No | `http://localhost:8080/events` | Weir `/events` endpoint URL |
 | `WEIR_AGENT_POLL_INTERVAL_SECS` | No | `15` | Seconds to sleep between poll cycles when idle |
 | `WEIR_AGENT_BATCH_SIZE` | No | `500` | Max events per backend POST |
 | `WEIR_AGENT_STATE_FILE` | No | `./weir-agent-state.json` | Path to persist cursor & generation |
 
-The directory containing `WEIR_AGENT_STATE_FILE` must already exist — the agent does not create it — and persist failures are logged only as warnings (not fatal), so run with logging enabled to notice them.
-
 Missing required variables cause a fatal startup error with a clear message.
 
-## Running
+The directory containing `WEIR_AGENT_STATE_FILE` must already exist — the agent
+does not create it — and persist failures are logged as warnings rather than
+being fatal, so run with logging enabled to notice them.
 
-Set the required environment variables (see `weir-agent.example.env`), then:
+## How it works
 
-```bash
-# Development
-cargo run
+### Poll cycle
 
-# Release build
-cargo build --release
-./target/release/weir-agent
-```
+1. **Fetch** — `GET /events?since=<cursor>&limit=<batch_size>` from Weir.
+2. **Restart detection** — if the response `generation` differs from the
+   persisted one, Weir has restarted and its event IDs have reset. Reset the
+   cursor to 0 and refetch from the beginning of the new process.
+3. **Ingest** — POST the batch to the backend with the instance ID, generation,
+   and events.
+4. **Advance & persist** — on a 2xx response, update the cursor to the highest
+   event ID in the batch and atomically persist `(generation, cursor)`. On
+   failure, hold the cursor and retry next cycle.
 
-The agent logs startup config and cycle outcomes to stderr (via `RUST_LOG` tracing levels). It gracefully shuts down on Ctrl+C or SIGTERM.
+### At-least-once delivery
 
-```bash
-# Set log level
-RUST_LOG=info cargo run
+The agent guarantees at-least-once delivery of each event:
 
-# Or with a binary
-RUST_LOG=warn ./target/release/weir-agent
-```
+- The cursor only advances after a successful (2xx) backend POST.
+- If the agent crashes after a successful ingest but before persisting the
+  cursor, the batch is resent on restart.
+- **The backend must deduplicate on `(instance_id, generation, event.id)`** to
+  achieve exactly-once semantics.
+- Events are lost only if the agent is offline long enough that they age out of
+  Weir's bounded in-memory ring buffer.
 
-## Ingestion Contract
+### Backoff & drain
 
-The agent POSTs to the backend URL with the following contract:
+If a batch comes back full, the agent cycles immediately to check for more
+(drain mode). If it's empty or short, the agent sleeps for the poll interval. On
+transient failures — Weir or the backend unreachable — it backs off to the same
+interval sleep.
 
-**Method & Auth:**
+## Ingestion contract
+
+**Method & auth:**
+
 - `POST <WEIR_AGENT_BACKEND_URL>`
-- Header: `Authorization: Bearer <WEIR_AGENT_ORG_KEY>`
+- `Authorization: Bearer <WEIR_AGENT_ORG_KEY>`
 
-**Body** (JSON):
+**Body:**
+
 ```json
 {
   "instance_id": "prod-us-east",
   "generation": "abc123",
   "events": [
-    { "id": 1, "tenant": "acct_1", "provider": "openai", "model": "gpt-4", "tokens": { "prompt": 50, "completion": 25 }, "outcome": "completed", ... },
-    { "id": 2, "tenant": "acct_2", "provider": "anthropic", "model": "claude-3", ... }
+    { "id": 1, "tenant": "acct_1", "provider": "openai", "model": "gpt-4o-mini",
+      "tokens": { "prompt": 50, "completion": 25 }, "outcome": "completed" },
+    { "id": 2, "tenant": "acct_2", "provider": "anthropic", "model": "claude-sonnet-5",
+      "outcome": "policy_blocked", "rule": "blocked_tool:send_email" }
   ]
 }
 ```
 
-Events are the raw Weir `UsageEvent` JSON, forwarded verbatim. The backend must handle any 2xx (e.g., 200, 202, 204) as a successful ingest and deduplicate on `(instance_id, generation, event.id)` to ensure idempotency.
+Events are the raw Weir `UsageEvent` JSON, forwarded verbatim. The backend must
+treat any 2xx (200, 202, 204) as a successful ingest.
 
-## State & Cursor
+## State & cursor
 
-The agent persists a JSON state file containing:
+State is persisted to a JSON file, updated atomically after each successful
+ingest:
 
 ```json
-{
-  "generation": "abc123",
-  "cursor": 42
-}
+{ "generation": "abc123", "cursor": 42 }
 ```
 
-- **generation**: Snapshot of Weir's process generation when the cursor was last updated. Used to detect restarts.
-- **cursor**: The ID of the highest event successfully forwarded. The next poll requests events `since` this ID.
+- **generation** — snapshot of Weir's process generation when the cursor was last
+  updated. Used to detect restarts.
+- **cursor** — the ID of the highest event successfully forwarded. The next poll
+  requests events `since` this ID.
 
-If the state file doesn't exist on startup, the agent begins from cursor 0 with generation unknown.
+If the state file doesn't exist on startup, the agent begins from cursor 0 with
+generation unknown.
+
+## Development
+
+```bash
+cargo test
+cargo build --release
+```
+
+## License
+
+Apache License 2.0 — see [`LICENSE`](LICENSE).

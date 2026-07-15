@@ -17,7 +17,7 @@ It never sends prompt content, response content, or tool call arguments. Those
 never leave your Weir process, because Weir's `/events` endpoint does not expose
 them in the first place — there is nothing here to opt out of.
 
-This binary is open source so that claim is checkable rather than promised. It's
+The source is published so that claim is checkable rather than promised. It's
 about 800 lines of Rust; read it, build it, run your own.
 
 ## Use it with your own backend
@@ -152,4 +152,17 @@ cargo build --release
 
 ## License
 
-Apache License 2.0 — see [`LICENSE`](LICENSE).
+Business Source License 1.1 — see [`LICENSE`](LICENSE).
+
+weir-agent is source-available, not open source. Running it in production inside
+your own organisation is free and always will be — the Additional Use Grant
+covers internal production use explicitly. You can read, modify, fork, and
+self-host it, and point it at your own collector instead of ours. The one
+prohibited use is offering it to third parties as a hosted or embedded service
+competing with SymFynity's paid product.
+
+Four years after any given version is published, that version becomes available
+under the Apache License 2.0 automatically.
+
+weir-agent 0.1.0 was published under Apache License 2.0 and remains available
+under those terms. The Business Source License applies from 0.2.0 onward.

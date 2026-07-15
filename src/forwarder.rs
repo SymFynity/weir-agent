@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use crate::backend::BackendClient;
 use crate::state::AgentState;
-use crate::weir::{max_event_id, WeirClient};
+use crate::symfynity::{max_event_id, SymfynityClient};
 
 pub struct Forwarder {
-    pub weir: WeirClient,
+    pub symfynity: SymfynityClient,
     pub backend: BackendClient,
     pub instance_id: String,
     pub batch_size: usize,
@@ -19,40 +19,40 @@ pub enum CycleOutcome {
     /// Forwarded `count` events; `more` is true if the batch was full (a
     /// backlog may remain and the caller should cycle again immediately).
     Forwarded { count: usize, more: bool },
-    /// A transient failure (Weir or backend). Cursor unchanged; retry later.
+    /// A transient failure (SymFynity or backend). Cursor unchanged; retry later.
     Failed,
 }
 
 impl Forwarder {
-    /// One poll cycle: fetch since the current cursor, detect a Weir restart
+    /// One poll cycle: fetch since the current cursor, detect a SymFynity restart
     /// (generation change) and reset the cursor if so, forward the batch,
     /// and on success advance + persist the cursor. Never panics; a failure
     /// returns `Failed` with the cursor untouched.
     pub async fn run_cycle(&self, state: &mut AgentState) -> CycleOutcome {
-        let resp = match self.weir.fetch(state.cursor, self.batch_size).await {
+        let resp = match self.symfynity.fetch(state.cursor, self.batch_size).await {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!("weir fetch failed: {e}");
+                tracing::warn!("symfynity fetch failed: {e}");
                 return CycleOutcome::Failed;
             }
         };
 
-        // Restart detection: a changed generation means Weir restarted and
+        // Restart detection: a changed generation means SymFynity restarted and
         // its event ids restarted at 1, so our cursor is meaningless. Reset
         // to 0 and adopt the new generation. (Old un-forwarded events are
-        // already gone — Weir's buffer is in-memory.) Re-fetch from 0 so we
+        // already gone — SymFynity's buffer is in-memory.) Re-fetch from 0 so we
         // don't skip the new process's early events.
         if resp.generation != state.generation {
             tracing::info!(
-                "weir generation changed ({} -> {}); resetting cursor",
+                "symfynity generation changed ({} -> {}); resetting cursor",
                 state.generation, resp.generation
             );
             state.generation = resp.generation.clone();
             state.cursor = 0;
-            let refetched = match self.weir.fetch(0, self.batch_size).await {
+            let refetched = match self.symfynity.fetch(0, self.batch_size).await {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::warn!("weir refetch after generation change failed: {e}");
+                    tracing::warn!("symfynity refetch after generation change failed: {e}");
                     // Persist the new generation + reset cursor so we don't
                     // repeatedly reset; retry the fetch next cycle.
                     let _ = state.save(&self.state_file);
@@ -113,7 +113,7 @@ mod tests {
     struct Harness {
         _dir: tempfile::TempDir,
         state_file: PathBuf,
-        weir: MockServer,
+        symfynity: MockServer,
         backend: MockServer,
     }
 
@@ -123,14 +123,14 @@ mod tests {
         Harness {
             _dir: dir,
             state_file,
-            weir: MockServer::start().await,
+            symfynity: MockServer::start().await,
             backend: MockServer::start().await,
         }
     }
 
     fn forwarder(h: &Harness, batch_size: usize) -> Forwarder {
         Forwarder {
-            weir: WeirClient::new(format!("{}/events", h.weir.uri()), Duration::from_secs(5)),
+            symfynity: SymfynityClient::new(format!("{}/events", h.symfynity.uri()), Duration::from_secs(5)),
             backend: BackendClient::new(
                 format!("{}/v1/ingest", h.backend.uri()),
                 "sk".into(),
@@ -142,12 +142,12 @@ mod tests {
         }
     }
 
-    async fn weir_returns(h: &Harness, generation: &str, events: serde_json::Value) {
+    async fn symfynity_returns(h: &Harness, generation: &str, events: serde_json::Value) {
         Mock::given(method("GET")).and(path("/events"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "generation": generation, "events": events
             })))
-            .mount(&h.weir).await;
+            .mount(&h.symfynity).await;
     }
 
     async fn backend_accepts(h: &Harness) {
@@ -159,7 +159,7 @@ mod tests {
     #[tokio::test]
     async fn forwards_and_advances_cursor() {
         let h = harness().await;
-        weir_returns(&h, "gen-1", json!([{"id": 5}, {"id": 6}])).await;
+        symfynity_returns(&h, "gen-1", json!([{"id": 5}, {"id": 6}])).await;
         backend_accepts(&h).await;
         let f = forwarder(&h, 500);
         let mut state = AgentState::default();
@@ -175,7 +175,7 @@ mod tests {
     #[tokio::test]
     async fn empty_response_is_idle_and_holds_cursor() {
         let h = harness().await;
-        weir_returns(&h, "gen-1", json!([])).await;
+        symfynity_returns(&h, "gen-1", json!([])).await;
         let f = forwarder(&h, 500);
         let mut state = AgentState { generation: "gen-1".into(), cursor: 9 };
         assert_eq!(f.run_cycle(&mut state).await, CycleOutcome::Idle);
@@ -185,7 +185,7 @@ mod tests {
     #[tokio::test]
     async fn full_batch_signals_more() {
         let h = harness().await;
-        weir_returns(&h, "gen-1", json!([{"id": 1}, {"id": 2}])).await;
+        symfynity_returns(&h, "gen-1", json!([{"id": 1}, {"id": 2}])).await;
         backend_accepts(&h).await;
         let f = forwarder(&h, 2); // batch_size == returned count
         let mut state = AgentState { generation: "gen-1".into(), cursor: 0 };
@@ -202,7 +202,7 @@ mod tests {
         // be false (otherwise main's drain loop would busy-spin re-fetching
         // the same `since`).
         let h = harness().await;
-        weir_returns(&h, "gen-1", json!([{"tenant": "a"}, {"tenant": "b"}])).await;
+        symfynity_returns(&h, "gen-1", json!([{"tenant": "a"}, {"tenant": "b"}])).await;
         backend_accepts(&h).await;
         let f = forwarder(&h, 2); // batch_size == 2 == returned count
         let mut state = AgentState { generation: "gen-1".into(), cursor: 0 };
@@ -214,7 +214,7 @@ mod tests {
     #[tokio::test]
     async fn backend_failure_holds_cursor() {
         let h = harness().await;
-        weir_returns(&h, "gen-1", json!([{"id": 5}])).await;
+        symfynity_returns(&h, "gen-1", json!([{"id": 5}])).await;
         Mock::given(method("POST")).and(path("/v1/ingest"))
             .respond_with(ResponseTemplate::new(500))
             .mount(&h.backend).await;
@@ -226,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn generation_change_refetches_from_zero_not_the_stale_response() {
-        // Stored state points at gen-OLD/cursor=100. Weir now reports
+        // Stored state points at gen-OLD/cursor=100. SymFynity now reports
         // gen-NEW. The first fetch (since=100) and the refetch (since=0)
         // return DIFFERENT bodies, so this test distinguishes a correct
         // refetch-from-0 from a broken impl that reuses the stale response.
@@ -237,13 +237,13 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "generation": "gen-NEW", "events": [ {"id": 999} ]
             })))
-            .mount(&h.weir).await;
+            .mount(&h.symfynity).await;
         // Refetch from 0: the real new-process events that SHOULD be forwarded.
         Mock::given(method("GET")).and(path("/events")).and(query_param("since", "0"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "generation": "gen-NEW", "events": [ {"id": 1}, {"id": 2} ]
             })))
-            .mount(&h.weir).await;
+            .mount(&h.symfynity).await;
         backend_accepts(&h).await;
 
         let f = forwarder(&h, 500);
@@ -267,10 +267,10 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "generation": "gen-NEW", "events": [ {"id": 5} ]
             })))
-            .mount(&h.weir).await;
+            .mount(&h.symfynity).await;
         Mock::given(method("GET")).and(path("/events")).and(query_param("since", "0"))
             .respond_with(ResponseTemplate::new(500))
-            .mount(&h.weir).await;
+            .mount(&h.symfynity).await;
 
         let f = forwarder(&h, 500);
         let mut state = AgentState { generation: "gen-OLD".into(), cursor: 100 };

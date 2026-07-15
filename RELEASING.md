@@ -1,8 +1,8 @@
-# Releasing weir-agent
+# Releasing symfynity-agent
 
 ## Licence checks — read before every release
 
-weir-agent is licensed under the Business Source License 1.1 (see
+symfynity-agent is licensed under the Business Source License 1.1 (see
 [`LICENSE`](LICENSE)). BSL has a small number of ways to go quietly wrong at
 release time. None of them error; they all just silently give away more than
 intended.
@@ -28,11 +28,13 @@ invisible until it has already happened, and it cannot be undone.
 ### Do not bump `Licensed Work` per release
 
 ```
-Licensed Work:        weir-agent Version 0.2.0 or later.
+Licensed Work:        symfynity-agent Version 0.3.0 or later.
 ```
 
 The `or later` covers all future versions. This line changes only if the
-licensing policy itself changes — it is not a version-bump chore.
+licensing policy itself changes, or the Licensed Work is renamed — it is not a
+version-bump chore. It has changed exactly once, at 0.3.0, when the agent was
+renamed from weir-agent to symfynity-agent.
 
 ### Bump the copyright year in January
 
@@ -44,13 +46,13 @@ solicitor notices.
 BSL: *"You must conspicuously display this License on each original or modified
 copy of the Licensed Work."* A published binary is a copy.
 
-weir-agent has no Dockerfile today. If one is added, or any other distribution
+symfynity-agent has no Dockerfile today. If one is added, or any other distribution
 channel (tarball, crates.io, package repo), it must ship `LICENSE` alongside the
-binary — see `weir-proxy/Dockerfile` for the pattern.
+binary — see `symfynity/Dockerfile` for the pattern.
 
 ### Check new dependency licences
 
-weir-agent is distributed as a compiled binary, so a copyleft dependency pulled
+symfynity-agent is distributed as a compiled binary, so a copyleft dependency pulled
 into the tree becomes a licensing problem for the whole artifact — BSL does not
 override an upstream GPL obligation. Worth a look whenever `Cargo.lock` gains
 entries:
@@ -61,26 +63,39 @@ cargo tree --format '{p} {l}' | grep -viE 'MIT|Apache-2.0|BSD|ISC|Unicode|Zlib' 
 
 ## Version history and licensing
 
-| Version | Licence |
-|---|---|
-| 0.1.0 | Apache License 2.0 |
-| 0.2.0 onward | Business Source License 1.1 → Apache-2.0 after four years |
+| Version | Published as | Licence |
+|---|---|---|
+| 0.1.0 | weir-agent | Apache License 2.0 |
+| 0.2.0 | weir-agent | Business Source License 1.1 |
+| 0.3.0 onward | symfynity-agent | Business Source License 1.1 → Apache-2.0 after four years |
 
-weir-agent 0.1.0 was published publicly under Apache-2.0. Those terms are
-irrevocable for that version and anyone who obtained it — that is expected and
-fine, not a leak to be plugged.
+Both earlier versions were published publicly under the name weir-agent, and
+0.1.0 under Apache-2.0. Those terms are irrevocable for that version and anyone
+who obtained it — that is expected and fine, not a leak to be plugged. A
+published version keeps the name and terms it was published under, permanently.
 
 ## Secrets check before publishing
 
-This repo went public once already. `weir-agent.example.env` is a tracked file
+This repo went public once already. `symfynity-agent.example.env` is a tracked file
 whose placeholder was previously replaced in a working tree with a live-looking
 org key; it was caught before it was committed. Publishing exposes *history*, not
 just the current tree, so any future private→public transfer of a repo must gate
 on a full history scan, not a glance at `git status`:
 
 ```bash
-git log -p --all -- weir-agent.example.env | grep -iE 'weir_[A-Za-z0-9]{8,}'
+git log -p --all --follow -- symfynity-agent.example.env weir-agent.example.env \
+  | grep -iE '\b(sfy|weir)_[A-Za-z0-9]{8,}'
 ```
+
+Two details that are easy to get wrong, and both make the scan silently pass:
+
+- **Scan the old filename too.** History under `weir-agent.example.env` predates
+  the 0.3.0 rename; without `--follow` and the old path, the commits that matter
+  are the ones you don't see.
+- **Scan the old key prefix too.** Org keys are `sfy_` from now on, but every key
+  that ever existed while this repo was public was `weir_`. A scan for the
+  current prefix alone would have missed the exact incident that prompted
+  this section.
 
 ## If the licence is ever changed again
 

@@ -4,7 +4,7 @@ pub mod backend;
 pub mod config;
 pub mod forwarder;
 pub mod state;
-pub mod weir;
+pub mod symfynity;
 
 #[cfg(test)]
 mod tests {

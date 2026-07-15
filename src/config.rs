@@ -13,8 +13,8 @@ pub struct Config {
 }
 
 impl Config {
-    /// Reads config from environment variables. Required: WEIR_AGENT_BACKEND_URL,
-    /// WEIR_AGENT_ORG_KEY, WEIR_AGENT_INSTANCE_ID. Others have defaults.
+    /// Reads config from environment variables. Required: SYMFYNITY_AGENT_BACKEND_URL,
+    /// SYMFYNITY_AGENT_ORG_KEY, SYMFYNITY_AGENT_INSTANCE_ID. Others have defaults.
     pub fn from_env() -> Result<Self, String> {
         Self::from_source(|k| std::env::var(k).ok())
     }
@@ -24,36 +24,36 @@ impl Config {
         let required = |key: &str, get: &dyn Fn(&str) -> Option<String>| {
             get(key).filter(|v| !v.is_empty()).ok_or_else(|| format!("missing required config: {key}"))
         };
-        let backend_url = required("WEIR_AGENT_BACKEND_URL", &get)?;
-        let org_key = required("WEIR_AGENT_ORG_KEY", &get)?;
-        let instance_id = required("WEIR_AGENT_INSTANCE_ID", &get)?;
+        let backend_url = required("SYMFYNITY_AGENT_BACKEND_URL", &get)?;
+        let org_key = required("SYMFYNITY_AGENT_ORG_KEY", &get)?;
+        let instance_id = required("SYMFYNITY_AGENT_INSTANCE_ID", &get)?;
 
-        let events_url = get("WEIR_AGENT_EVENTS_URL")
+        let events_url = get("SYMFYNITY_AGENT_EVENTS_URL")
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| "http://localhost:8080/events".to_string());
 
-        let poll_interval_secs = match get("WEIR_AGENT_POLL_INTERVAL_SECS") {
+        let poll_interval_secs = match get("SYMFYNITY_AGENT_POLL_INTERVAL_SECS") {
             Some(v) => v.parse::<u64>().map_err(|_| {
-                "WEIR_AGENT_POLL_INTERVAL_SECS must be a positive integer".to_string()
+                "SYMFYNITY_AGENT_POLL_INTERVAL_SECS must be a positive integer".to_string()
             })?,
             None => 15,
         };
         if poll_interval_secs == 0 {
-            return Err("WEIR_AGENT_POLL_INTERVAL_SECS must be greater than 0".to_string());
+            return Err("SYMFYNITY_AGENT_POLL_INTERVAL_SECS must be greater than 0".to_string());
         }
-        let batch_size = match get("WEIR_AGENT_BATCH_SIZE") {
+        let batch_size = match get("SYMFYNITY_AGENT_BATCH_SIZE") {
             Some(v) => v
                 .parse::<usize>()
-                .map_err(|_| "WEIR_AGENT_BATCH_SIZE must be a positive integer".to_string())?,
+                .map_err(|_| "SYMFYNITY_AGENT_BATCH_SIZE must be a positive integer".to_string())?,
             None => 500,
         };
         if batch_size == 0 {
-            return Err("WEIR_AGENT_BATCH_SIZE must be greater than 0".to_string());
+            return Err("SYMFYNITY_AGENT_BATCH_SIZE must be greater than 0".to_string());
         }
 
-        let state_file = get("WEIR_AGENT_STATE_FILE")
+        let state_file = get("SYMFYNITY_AGENT_STATE_FILE")
             .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| "./weir-agent-state.json".to_string())
+            .unwrap_or_else(|| "./symfynity-agent-state.json".to_string())
             .into();
 
         Ok(Config {
@@ -82,9 +82,9 @@ mod tests {
     #[test]
     fn parses_required_and_defaults() {
         let cfg = Config::from_source(source(&[
-            ("WEIR_AGENT_BACKEND_URL", "https://backend.example/v1/ingest"),
-            ("WEIR_AGENT_ORG_KEY", "sk-org-123"),
-            ("WEIR_AGENT_INSTANCE_ID", "prod-us-east"),
+            ("SYMFYNITY_AGENT_BACKEND_URL", "https://backend.example/v1/ingest"),
+            ("SYMFYNITY_AGENT_ORG_KEY", "sk-org-123"),
+            ("SYMFYNITY_AGENT_INSTANCE_ID", "prod-us-east"),
         ]))
         .unwrap();
         assert_eq!(cfg.backend_url, "https://backend.example/v1/ingest");
@@ -93,40 +93,40 @@ mod tests {
         assert_eq!(cfg.events_url, "http://localhost:8080/events");
         assert_eq!(cfg.poll_interval, Duration::from_secs(15));
         assert_eq!(cfg.batch_size, 500);
-        assert_eq!(cfg.state_file, PathBuf::from("./weir-agent-state.json"));
+        assert_eq!(cfg.state_file, PathBuf::from("./symfynity-agent-state.json"));
     }
 
     #[test]
     fn missing_required_is_error() {
-        let err = Config::from_source(source(&[("WEIR_AGENT_ORG_KEY", "x")])).unwrap_err();
-        assert!(err.contains("WEIR_AGENT_BACKEND_URL"));
+        let err = Config::from_source(source(&[("SYMFYNITY_AGENT_ORG_KEY", "x")])).unwrap_err();
+        assert!(err.contains("SYMFYNITY_AGENT_BACKEND_URL"));
     }
 
     #[test]
     fn overrides_are_applied() {
         let cfg = Config::from_source(source(&[
-            ("WEIR_AGENT_BACKEND_URL", "https://b/i"),
-            ("WEIR_AGENT_ORG_KEY", "k"),
-            ("WEIR_AGENT_INSTANCE_ID", "i"),
-            ("WEIR_AGENT_EVENTS_URL", "http://weir:9000/events"),
-            ("WEIR_AGENT_POLL_INTERVAL_SECS", "5"),
-            ("WEIR_AGENT_BATCH_SIZE", "100"),
-            ("WEIR_AGENT_STATE_FILE", "/var/lib/weir-agent/state.json"),
+            ("SYMFYNITY_AGENT_BACKEND_URL", "https://b/i"),
+            ("SYMFYNITY_AGENT_ORG_KEY", "k"),
+            ("SYMFYNITY_AGENT_INSTANCE_ID", "i"),
+            ("SYMFYNITY_AGENT_EVENTS_URL", "http://symfynity:9000/events"),
+            ("SYMFYNITY_AGENT_POLL_INTERVAL_SECS", "5"),
+            ("SYMFYNITY_AGENT_BATCH_SIZE", "100"),
+            ("SYMFYNITY_AGENT_STATE_FILE", "/var/lib/symfynity-agent/state.json"),
         ]))
         .unwrap();
-        assert_eq!(cfg.events_url, "http://weir:9000/events");
+        assert_eq!(cfg.events_url, "http://symfynity:9000/events");
         assert_eq!(cfg.poll_interval, Duration::from_secs(5));
         assert_eq!(cfg.batch_size, 100);
-        assert_eq!(cfg.state_file, PathBuf::from("/var/lib/weir-agent/state.json"));
+        assert_eq!(cfg.state_file, PathBuf::from("/var/lib/symfynity-agent/state.json"));
     }
 
     #[test]
     fn zero_batch_size_is_error() {
         let err = Config::from_source(source(&[
-            ("WEIR_AGENT_BACKEND_URL", "https://b/i"),
-            ("WEIR_AGENT_ORG_KEY", "k"),
-            ("WEIR_AGENT_INSTANCE_ID", "i"),
-            ("WEIR_AGENT_BATCH_SIZE", "0"),
+            ("SYMFYNITY_AGENT_BACKEND_URL", "https://b/i"),
+            ("SYMFYNITY_AGENT_ORG_KEY", "k"),
+            ("SYMFYNITY_AGENT_INSTANCE_ID", "i"),
+            ("SYMFYNITY_AGENT_BATCH_SIZE", "0"),
         ]))
         .unwrap_err();
         assert!(err.contains("BATCH_SIZE"));
@@ -135,10 +135,10 @@ mod tests {
     #[test]
     fn zero_poll_interval_is_error() {
         let err = Config::from_source(source(&[
-            ("WEIR_AGENT_BACKEND_URL", "https://b/i"),
-            ("WEIR_AGENT_ORG_KEY", "k"),
-            ("WEIR_AGENT_INSTANCE_ID", "i"),
-            ("WEIR_AGENT_POLL_INTERVAL_SECS", "0"),
+            ("SYMFYNITY_AGENT_BACKEND_URL", "https://b/i"),
+            ("SYMFYNITY_AGENT_ORG_KEY", "k"),
+            ("SYMFYNITY_AGENT_INSTANCE_ID", "i"),
+            ("SYMFYNITY_AGENT_POLL_INTERVAL_SECS", "0"),
         ]))
         .unwrap_err();
         assert!(err.contains("POLL_INTERVAL"));

@@ -2,9 +2,9 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::Value;
 
-/// Mirror of Weir's `/events` response envelope. Events are kept as opaque
+/// Mirror of SymFynity's `/events` response envelope. Events are kept as opaque
 /// JSON `Value`s — the agent forwards them verbatim and only ever reads the
-/// numeric `id` (to advance its cursor), so it stays decoupled from Weir's
+/// numeric `id` (to advance its cursor), so it stays decoupled from SymFynity's
 /// `UsageEvent` schema.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EventsResponse {
@@ -12,12 +12,12 @@ pub struct EventsResponse {
     pub events: Vec<Value>,
 }
 
-pub struct WeirClient {
+pub struct SymfynityClient {
     http: reqwest::Client,
     events_url: String,
 }
 
-impl WeirClient {
+impl SymfynityClient {
     pub fn new(events_url: String, timeout: Duration) -> Self {
         let http = reqwest::Client::builder()
             .timeout(timeout)
@@ -35,13 +35,13 @@ impl WeirClient {
             .query(&[("since", since.to_string()), ("limit", limit.to_string())])
             .send()
             .await
-            .map_err(|e| format!("weir request failed: {e}"))?;
+            .map_err(|e| format!("symfynity request failed: {e}"))?;
         if !resp.status().is_success() {
-            return Err(format!("weir returned status {}", resp.status()));
+            return Err(format!("symfynity returned status {}", resp.status()));
         }
         resp.json::<EventsResponse>()
             .await
-            .map_err(|e| format!("weir response parse failed: {e}"))
+            .map_err(|e| format!("symfynity response parse failed: {e}"))
     }
 }
 
@@ -78,7 +78,7 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let client = WeirClient::new(format!("{}/events", mock.uri()), Duration::from_secs(5));
+        let client = SymfynityClient::new(format!("{}/events", mock.uri()), Duration::from_secs(5));
         let resp = client.fetch(10, 500).await.unwrap();
         assert_eq!(resp.generation, "gen-abc");
         assert_eq!(resp.events.len(), 1);
@@ -92,7 +92,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(500))
             .mount(&mock)
             .await;
-        let client = WeirClient::new(format!("{}/events", mock.uri()), Duration::from_secs(5));
+        let client = SymfynityClient::new(format!("{}/events", mock.uri()), Duration::from_secs(5));
         assert!(client.fetch(0, 500).await.is_err());
     }
 }

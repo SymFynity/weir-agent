@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// Persisted agent progress. `cursor` is the id of the last event
 /// successfully forwarded WITHIN `generation`; both reset together when
-/// Weir restarts (a new generation), since Weir's event ids restart at 1
+/// SymFynity restarts (a new generation), since SymFynity's event ids restart at 1
 /// each process.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct AgentState {

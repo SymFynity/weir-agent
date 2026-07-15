@@ -1,15 +1,15 @@
 [package]
-name = "weir-agent"
-version = "0.2.0"
+name = "symfynity-agent"
+version = "0.3.0"
 edition = "2021"
 license = "BUSL-1.1"
 
 [[bin]]
-name = "weir-agent"
+name = "symfynity-agent"
 path = "src/main.rs"
 
 [lib]
-name = "weir_agent"
+name = "symfynity_agent"
 path = "src/lib.rs"
 
 [dependencies]

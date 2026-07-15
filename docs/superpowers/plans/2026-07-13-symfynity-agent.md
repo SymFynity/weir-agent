@@ -1,42 +1,42 @@
-# weir-agent Implementation Plan
+# symfynity-agent Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build weir-agent — a small closed-source Rust binary that polls a local Weir `/events` endpoint and forwards per-request usage metadata to a hosted backend, with a disk-persisted `(generation, cursor)`, restart detection, at-least-once delivery, and robust failure handling.
+**Goal:** Build symfynity-agent — a small closed-source Rust binary that polls a local SymFynity `/events` endpoint and forwards per-request usage metadata to a hosted backend, with a disk-persisted `(generation, cursor)`, restart detection, at-least-once delivery, and robust failure handling.
 
-**Architecture:** One async poll loop (Tokio + reqwest). Each cycle: GET `{weir}/events?since={cursor}&limit={batch}` → if the response `generation` differs from persisted, reset the cursor (Weir restarted) → POST `{instance_id, generation, events}` to the backend with a bearer org key → on 2xx, advance the cursor to the batch's max event `id` and persist it atomically. Any failure logs and holds the cursor for the next interval. Events are forwarded **verbatim** as opaque JSON (the agent reads only each event's `id` to advance the cursor; it never inspects or reshapes payloads).
+**Architecture:** One async poll loop (Tokio + reqwest). Each cycle: GET `{symfynity}/events?since={cursor}&limit={batch}` → if the response `generation` differs from persisted, reset the cursor (SymFynity restarted) → POST `{instance_id, generation, events}` to the backend with a bearer org key → on 2xx, advance the cursor to the batch's max event `id` and persist it atomically. Any failure logs and holds the cursor for the next interval. Events are forwarded **verbatim** as opaque JSON (the agent reads only each event's `id` to advance the cursor; it never inspects or reshapes payloads).
 
 **Tech Stack:** Rust, Tokio, reqwest (JSON + rustls), serde/serde_json, tracing. Dev: wiremock, tempfile.
 
 ## Global Constraints
 
-- **Privacy line:** the agent forwards only what Weir's `/events` exposes (metadata), verbatim. It must not inspect, log, or persist event contents beyond each event's numeric `id` (needed for the cursor). Never log full event bodies at info level.
+- **Privacy line:** the agent forwards only what SymFynity's `/events` exposes (metadata), verbatim. It must not inspect, log, or persist event contents beyond each event's numeric `id` (needed for the cursor). Never log full event bodies at info level.
 - **Deliberately dumb:** no alerting, aggregation, dedup, or policy logic in the agent. It forwards facts; the backend interprets them.
 - **Robustness:** every network call has a timeout; no failure path panics or blocks the loop forever. Missing required config is a fatal startup error.
-- **Delivery = at-least-once:** the cursor advances only after the backend acks. The backend dedupes on `(instance_id, generation, event.id)` — the agent forwards `generation` so that key is well-defined across Weir restarts (event `id` resets per generation).
-- **Ingestion contract (fixed):** `POST {backend_url}`, header `Authorization: Bearer <org_key>`, body `{ "instance_id": String, "generation": String, "events": [<verbatim Weir UsageEvent JSON>] }`, any `2xx` = accepted.
-- No secrets committed. `weir-agent-state.json` and `.env` are gitignored.
+- **Delivery = at-least-once:** the cursor advances only after the backend acks. The backend dedupes on `(instance_id, generation, event.id)` — the agent forwards `generation` so that key is well-defined across SymFynity restarts (event `id` resets per generation).
+- **Ingestion contract (fixed):** `POST {backend_url}`, header `Authorization: Bearer <org_key>`, body `{ "instance_id": String, "generation": String, "events": [<verbatim SymFynity UsageEvent JSON>] }`, any `2xx` = accepted.
+- No secrets committed. `symfynity-agent-state.json` and `.env` are gitignored.
 
 ---
 
 ## File Structure
 
 ```
-weir-agent/
+symfynity-agent/
 ├── Cargo.toml
 ├── .gitignore
 ├── README.md
-├── weir-agent.example.env
+├── symfynity-agent.example.env
 ├── src/
 │   ├── main.rs        (wiring: load config, build clients, run loop w/ graceful shutdown)
 │   ├── lib.rs         (module declarations; re-exports for tests)
 │   ├── config.rs      (Config + from_env, fail-fast)
 │   ├── state.rs       (AgentState { generation, cursor }, atomic save/load)
-│   ├── weir.rs        (WeirClient: GET /events -> EventsResponse { generation, events: Vec<Value> })
+│   ├── symfynity.rs        (SymfynityClient: GET /events -> EventsResponse { generation, events: Vec<Value> })
 │   ├── backend.rs     (BackendClient: POST ingest body, bearer auth)
 │   └── forwarder.rs   (poll cycle: fetch -> restart-detect -> forward -> advance+persist; drain)
 └── tests/
-    └── forwarder_test.rs  (end-to-end against wiremock Weir + backend stubs)
+    └── forwarder_test.rs  (end-to-end against wiremock SymFynity + backend stubs)
 ```
 
 ---
@@ -48,7 +48,7 @@ weir-agent/
 - Test: a trivial lib test to confirm the build
 
 **Interfaces:**
-- Produces: a compiling binary + lib crate named `weir_agent`.
+- Produces: a compiling binary + lib crate named `symfynity_agent`.
 
 - [ ] **Step 1: Verify `.gitignore`**
 
@@ -59,25 +59,25 @@ A `.gitignore` already exists at the repo root (committed alongside this plan). 
 !docs/superpowers/
 /target/
 /.worktrees/
-weir-agent-state.json
+symfynity-agent-state.json
 *.env
-!weir-agent.example.env
+!symfynity-agent.example.env
 ```
 
 - [ ] **Step 2: Create `Cargo.toml`**
 
 ```toml
 [package]
-name = "weir-agent"
+name = "symfynity-agent"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "weir-agent"
+name = "symfynity-agent"
 path = "src/main.rs"
 
 [lib]
-name = "weir_agent"
+name = "symfynity_agent"
 path = "src/lib.rs"
 
 [dependencies]
@@ -100,10 +100,10 @@ pub mod backend;
 pub mod config;
 pub mod forwarder;
 pub mod state;
-pub mod weir;
+pub mod symfynity;
 ```
 
-(The modules are created in later tasks; for THIS task, create empty placeholder files so the crate compiles — `src/config.rs`, `src/state.rs`, `src/weir.rs`, `src/backend.rs`, `src/forwarder.rs` each containing only a `// placeholder` line is fine, OR declare the modules incrementally. To keep Task 1 self-contained and compiling, create `src/lib.rs` with NO module declarations yet, and add each `pub mod` line in the task that creates that module.)
+(The modules are created in later tasks; for THIS task, create empty placeholder files so the crate compiles — `src/config.rs`, `src/state.rs`, `src/symfynity.rs`, `src/backend.rs`, `src/forwarder.rs` each containing only a `// placeholder` line is fine, OR declare the modules incrementally. To keep Task 1 self-contained and compiling, create `src/lib.rs` with NO module declarations yet, and add each `pub mod` line in the task that creates that module.)
 
 Use this for Task 1's `src/lib.rs`:
 ```rust
@@ -116,7 +116,7 @@ Use this for Task 1's `src/lib.rs`:
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
-    tracing::info!("weir-agent starting");
+    tracing::info!("symfynity-agent starting");
     // Wiring is completed in a later task.
 }
 ```
@@ -145,7 +145,7 @@ Expected: PASS (1 test).
 
 ```bash
 git add Cargo.toml Cargo.lock .gitignore src/main.rs src/lib.rs
-git commit -m "chore: scaffold weir-agent Cargo project"
+git commit -m "chore: scaffold symfynity-agent Cargo project"
 ```
 
 ---
@@ -178,8 +178,8 @@ pub struct Config {
 }
 
 impl Config {
-    /// Reads config from environment variables. Required: WEIR_AGENT_BACKEND_URL,
-    /// WEIR_AGENT_ORG_KEY, WEIR_AGENT_INSTANCE_ID. Others have defaults.
+    /// Reads config from environment variables. Required: SYMFYNITY_AGENT_BACKEND_URL,
+    /// SYMFYNITY_AGENT_ORG_KEY, SYMFYNITY_AGENT_INSTANCE_ID. Others have defaults.
     pub fn from_env() -> Result<Self, String> {
         Self::from_source(|k| std::env::var(k).ok())
     }
@@ -189,33 +189,33 @@ impl Config {
         let required = |key: &str, get: &dyn Fn(&str) -> Option<String>| {
             get(key).filter(|v| !v.is_empty()).ok_or_else(|| format!("missing required config: {key}"))
         };
-        let backend_url = required("WEIR_AGENT_BACKEND_URL", &get)?;
-        let org_key = required("WEIR_AGENT_ORG_KEY", &get)?;
-        let instance_id = required("WEIR_AGENT_INSTANCE_ID", &get)?;
+        let backend_url = required("SYMFYNITY_AGENT_BACKEND_URL", &get)?;
+        let org_key = required("SYMFYNITY_AGENT_ORG_KEY", &get)?;
+        let instance_id = required("SYMFYNITY_AGENT_INSTANCE_ID", &get)?;
 
-        let events_url = get("WEIR_AGENT_EVENTS_URL")
+        let events_url = get("SYMFYNITY_AGENT_EVENTS_URL")
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| "http://localhost:8080/events".to_string());
 
-        let poll_interval_secs = match get("WEIR_AGENT_POLL_INTERVAL_SECS") {
+        let poll_interval_secs = match get("SYMFYNITY_AGENT_POLL_INTERVAL_SECS") {
             Some(v) => v.parse::<u64>().map_err(|_| {
-                "WEIR_AGENT_POLL_INTERVAL_SECS must be a positive integer".to_string()
+                "SYMFYNITY_AGENT_POLL_INTERVAL_SECS must be a positive integer".to_string()
             })?,
             None => 15,
         };
-        let batch_size = match get("WEIR_AGENT_BATCH_SIZE") {
+        let batch_size = match get("SYMFYNITY_AGENT_BATCH_SIZE") {
             Some(v) => v
                 .parse::<usize>()
-                .map_err(|_| "WEIR_AGENT_BATCH_SIZE must be a positive integer".to_string())?,
+                .map_err(|_| "SYMFYNITY_AGENT_BATCH_SIZE must be a positive integer".to_string())?,
             None => 500,
         };
         if batch_size == 0 {
-            return Err("WEIR_AGENT_BATCH_SIZE must be greater than 0".to_string());
+            return Err("SYMFYNITY_AGENT_BATCH_SIZE must be greater than 0".to_string());
         }
 
-        let state_file = get("WEIR_AGENT_STATE_FILE")
+        let state_file = get("SYMFYNITY_AGENT_STATE_FILE")
             .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| "./weir-agent-state.json".to_string())
+            .unwrap_or_else(|| "./symfynity-agent-state.json".to_string())
             .into();
 
         Ok(Config {
@@ -244,9 +244,9 @@ mod tests {
     #[test]
     fn parses_required_and_defaults() {
         let cfg = Config::from_source(source(&[
-            ("WEIR_AGENT_BACKEND_URL", "https://backend.example/v1/ingest"),
-            ("WEIR_AGENT_ORG_KEY", "sk-org-123"),
-            ("WEIR_AGENT_INSTANCE_ID", "prod-us-east"),
+            ("SYMFYNITY_AGENT_BACKEND_URL", "https://backend.example/v1/ingest"),
+            ("SYMFYNITY_AGENT_ORG_KEY", "sk-org-123"),
+            ("SYMFYNITY_AGENT_INSTANCE_ID", "prod-us-east"),
         ]))
         .unwrap();
         assert_eq!(cfg.backend_url, "https://backend.example/v1/ingest");
@@ -255,40 +255,40 @@ mod tests {
         assert_eq!(cfg.events_url, "http://localhost:8080/events");
         assert_eq!(cfg.poll_interval, Duration::from_secs(15));
         assert_eq!(cfg.batch_size, 500);
-        assert_eq!(cfg.state_file, PathBuf::from("./weir-agent-state.json"));
+        assert_eq!(cfg.state_file, PathBuf::from("./symfynity-agent-state.json"));
     }
 
     #[test]
     fn missing_required_is_error() {
-        let err = Config::from_source(source(&[("WEIR_AGENT_ORG_KEY", "x")])).unwrap_err();
-        assert!(err.contains("WEIR_AGENT_BACKEND_URL"));
+        let err = Config::from_source(source(&[("SYMFYNITY_AGENT_ORG_KEY", "x")])).unwrap_err();
+        assert!(err.contains("SYMFYNITY_AGENT_BACKEND_URL"));
     }
 
     #[test]
     fn overrides_are_applied() {
         let cfg = Config::from_source(source(&[
-            ("WEIR_AGENT_BACKEND_URL", "https://b/i"),
-            ("WEIR_AGENT_ORG_KEY", "k"),
-            ("WEIR_AGENT_INSTANCE_ID", "i"),
-            ("WEIR_AGENT_EVENTS_URL", "http://weir:9000/events"),
-            ("WEIR_AGENT_POLL_INTERVAL_SECS", "5"),
-            ("WEIR_AGENT_BATCH_SIZE", "100"),
-            ("WEIR_AGENT_STATE_FILE", "/var/lib/weir-agent/state.json"),
+            ("SYMFYNITY_AGENT_BACKEND_URL", "https://b/i"),
+            ("SYMFYNITY_AGENT_ORG_KEY", "k"),
+            ("SYMFYNITY_AGENT_INSTANCE_ID", "i"),
+            ("SYMFYNITY_AGENT_EVENTS_URL", "http://symfynity:9000/events"),
+            ("SYMFYNITY_AGENT_POLL_INTERVAL_SECS", "5"),
+            ("SYMFYNITY_AGENT_BATCH_SIZE", "100"),
+            ("SYMFYNITY_AGENT_STATE_FILE", "/var/lib/symfynity-agent/state.json"),
         ]))
         .unwrap();
-        assert_eq!(cfg.events_url, "http://weir:9000/events");
+        assert_eq!(cfg.events_url, "http://symfynity:9000/events");
         assert_eq!(cfg.poll_interval, Duration::from_secs(5));
         assert_eq!(cfg.batch_size, 100);
-        assert_eq!(cfg.state_file, PathBuf::from("/var/lib/weir-agent/state.json"));
+        assert_eq!(cfg.state_file, PathBuf::from("/var/lib/symfynity-agent/state.json"));
     }
 
     #[test]
     fn zero_batch_size_is_error() {
         let err = Config::from_source(source(&[
-            ("WEIR_AGENT_BACKEND_URL", "https://b/i"),
-            ("WEIR_AGENT_ORG_KEY", "k"),
-            ("WEIR_AGENT_INSTANCE_ID", "i"),
-            ("WEIR_AGENT_BATCH_SIZE", "0"),
+            ("SYMFYNITY_AGENT_BACKEND_URL", "https://b/i"),
+            ("SYMFYNITY_AGENT_ORG_KEY", "k"),
+            ("SYMFYNITY_AGENT_INSTANCE_ID", "i"),
+            ("SYMFYNITY_AGENT_BATCH_SIZE", "0"),
         ]))
         .unwrap_err();
         assert!(err.contains("BATCH_SIZE"));
@@ -332,7 +332,7 @@ use serde::{Deserialize, Serialize};
 
 /// Persisted agent progress. `cursor` is the id of the last event
 /// successfully forwarded WITHIN `generation`; both reset together when
-/// Weir restarts (a new generation), since Weir's event ids restart at 1
+/// SymFynity restarts (a new generation), since SymFynity's event ids restart at 1
 /// each process.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct AgentState {
@@ -424,26 +424,26 @@ git commit -m "feat: atomic, restart-safe agent state persistence"
 
 ---
 
-### Task 4: Weir client (fetch `/events`)
+### Task 4: SymFynity client (fetch `/events`)
 
 **Files:**
-- Create: `src/weir.rs`
-- Modify: `src/lib.rs` (add `pub mod weir;`)
+- Create: `src/symfynity.rs`
+- Modify: `src/lib.rs` (add `pub mod symfynity;`)
 
 **Interfaces:**
-- Produces: `EventsResponse { generation: String, events: Vec<serde_json::Value> }` (Deserialize — mirrors Weir's `/events` envelope; events kept as opaque `Value` so the agent is decoupled from Weir's exact `UsageEvent` schema), `WeirClient::new(events_url: String, timeout: Duration) -> Self`, `async fn fetch(&self, since: u64, limit: usize) -> Result<EventsResponse, String>`. Used by `forwarder` (Task 6). Also a free helper `max_event_id(events: &[Value]) -> Option<u64>` that reads each event's numeric `"id"` and returns the max.
+- Produces: `EventsResponse { generation: String, events: Vec<serde_json::Value> }` (Deserialize — mirrors SymFynity's `/events` envelope; events kept as opaque `Value` so the agent is decoupled from SymFynity's exact `UsageEvent` schema), `SymfynityClient::new(events_url: String, timeout: Duration) -> Self`, `async fn fetch(&self, since: u64, limit: usize) -> Result<EventsResponse, String>`. Used by `forwarder` (Task 6). Also a free helper `max_event_id(events: &[Value]) -> Option<u64>` that reads each event's numeric `"id"` and returns the max.
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `src/weir.rs`:
+Create `src/symfynity.rs`:
 ```rust
 use std::time::Duration;
 use serde::Deserialize;
 use serde_json::Value;
 
-/// Mirror of Weir's `/events` response envelope. Events are kept as opaque
+/// Mirror of SymFynity's `/events` response envelope. Events are kept as opaque
 /// JSON `Value`s — the agent forwards them verbatim and only ever reads the
-/// numeric `id` (to advance its cursor), so it stays decoupled from Weir's
+/// numeric `id` (to advance its cursor), so it stays decoupled from SymFynity's
 /// `UsageEvent` schema.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EventsResponse {
@@ -451,12 +451,12 @@ pub struct EventsResponse {
     pub events: Vec<Value>,
 }
 
-pub struct WeirClient {
+pub struct SymfynityClient {
     http: reqwest::Client,
     events_url: String,
 }
 
-impl WeirClient {
+impl SymfynityClient {
     pub fn new(events_url: String, timeout: Duration) -> Self {
         let http = reqwest::Client::builder()
             .timeout(timeout)
@@ -474,13 +474,13 @@ impl WeirClient {
             .query(&[("since", since.to_string()), ("limit", limit.to_string())])
             .send()
             .await
-            .map_err(|e| format!("weir request failed: {e}"))?;
+            .map_err(|e| format!("symfynity request failed: {e}"))?;
         if !resp.status().is_success() {
-            return Err(format!("weir returned status {}", resp.status()));
+            return Err(format!("symfynity returned status {}", resp.status()));
         }
         resp.json::<EventsResponse>()
             .await
-            .map_err(|e| format!("weir response parse failed: {e}"))
+            .map_err(|e| format!("symfynity response parse failed: {e}"))
     }
 }
 
@@ -517,7 +517,7 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let client = WeirClient::new(format!("{}/events", mock.uri()), Duration::from_secs(5));
+        let client = SymfynityClient::new(format!("{}/events", mock.uri()), Duration::from_secs(5));
         let resp = client.fetch(10, 500).await.unwrap();
         assert_eq!(resp.generation, "gen-abc");
         assert_eq!(resp.events.len(), 1);
@@ -531,7 +531,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(500))
             .mount(&mock)
             .await;
-        let client = WeirClient::new(format!("{}/events", mock.uri()), Duration::from_secs(5));
+        let client = SymfynityClient::new(format!("{}/events", mock.uri()), Duration::from_secs(5));
         assert!(client.fetch(0, 500).await.is_err());
     }
 }
@@ -539,18 +539,18 @@ mod tests {
 
 - [ ] **Step 2: Wire the module**
 
-Add to `src/lib.rs`: `pub mod weir;`
+Add to `src/lib.rs`: `pub mod symfynity;`
 
 - [ ] **Step 3: Run tests**
 
-Run: `cargo test --lib weir`
+Run: `cargo test --lib symfynity`
 Expected: PASS (3 tests).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/weir.rs src/lib.rs
-git commit -m "feat: Weir /events client with opaque verbatim events"
+git add src/symfynity.rs src/lib.rs
+git commit -m "feat: SymFynity /events client with opaque verbatim events"
 ```
 
 ---
@@ -692,8 +692,8 @@ git commit -m "feat: backend ingest client (bearer auth, contract body)"
 - Modify: `src/lib.rs` (add `pub mod forwarder;`)
 
 **Interfaces:**
-- Consumes: `WeirClient` (Task 4), `BackendClient` (Task 5), `AgentState` (Task 3), `max_event_id` (Task 4).
-- Produces: `Forwarder { weir, backend, instance_id, batch_size, state_file }` and `async fn run_cycle(&self, state: &mut AgentState) -> CycleOutcome`, where `CycleOutcome` is an enum `{ Idle, Forwarded { count: usize, more: bool }, Failed }`. `run_cycle` does exactly one fetch→(restart-detect)→forward→advance+persist step and returns whether there may be more to drain. The `main` loop (Task 7) calls `run_cycle` repeatedly, draining while `more == true`, sleeping between idle/failed cycles. Kept as a pure-ish method (takes `&mut AgentState`, persists via `state_file`) so it's unit-testable against wiremock.
+- Consumes: `SymfynityClient` (Task 4), `BackendClient` (Task 5), `AgentState` (Task 3), `max_event_id` (Task 4).
+- Produces: `Forwarder { symfynity, backend, instance_id, batch_size, state_file }` and `async fn run_cycle(&self, state: &mut AgentState) -> CycleOutcome`, where `CycleOutcome` is an enum `{ Idle, Forwarded { count: usize, more: bool }, Failed }`. `run_cycle` does exactly one fetch→(restart-detect)→forward→advance+persist step and returns whether there may be more to drain. The `main` loop (Task 7) calls `run_cycle` repeatedly, draining while `more == true`, sleeping between idle/failed cycles. Kept as a pure-ish method (takes `&mut AgentState`, persists via `state_file`) so it's unit-testable against wiremock.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -703,10 +703,10 @@ use std::path::PathBuf;
 
 use crate::backend::BackendClient;
 use crate::state::AgentState;
-use crate::weir::{max_event_id, WeirClient};
+use crate::symfynity::{max_event_id, SymfynityClient};
 
 pub struct Forwarder {
-    pub weir: WeirClient,
+    pub symfynity: SymfynityClient,
     pub backend: BackendClient,
     pub instance_id: String,
     pub batch_size: usize,
@@ -720,40 +720,40 @@ pub enum CycleOutcome {
     /// Forwarded `count` events; `more` is true if the batch was full (a
     /// backlog may remain and the caller should cycle again immediately).
     Forwarded { count: usize, more: bool },
-    /// A transient failure (Weir or backend). Cursor unchanged; retry later.
+    /// A transient failure (SymFynity or backend). Cursor unchanged; retry later.
     Failed,
 }
 
 impl Forwarder {
-    /// One poll cycle: fetch since the current cursor, detect a Weir restart
+    /// One poll cycle: fetch since the current cursor, detect a SymFynity restart
     /// (generation change) and reset the cursor if so, forward the batch,
     /// and on success advance + persist the cursor. Never panics; a failure
     /// returns `Failed` with the cursor untouched.
     pub async fn run_cycle(&self, state: &mut AgentState) -> CycleOutcome {
-        let resp = match self.weir.fetch(state.cursor, self.batch_size).await {
+        let resp = match self.symfynity.fetch(state.cursor, self.batch_size).await {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!("weir fetch failed: {e}");
+                tracing::warn!("symfynity fetch failed: {e}");
                 return CycleOutcome::Failed;
             }
         };
 
-        // Restart detection: a changed generation means Weir restarted and
+        // Restart detection: a changed generation means SymFynity restarted and
         // its event ids restarted at 1, so our cursor is meaningless. Reset
         // to 0 and adopt the new generation. (Old un-forwarded events are
-        // already gone — Weir's buffer is in-memory.) Re-fetch from 0 so we
+        // already gone — SymFynity's buffer is in-memory.) Re-fetch from 0 so we
         // don't skip the new process's early events.
         if resp.generation != state.generation {
             tracing::info!(
-                "weir generation changed ({} -> {}); resetting cursor",
+                "symfynity generation changed ({} -> {}); resetting cursor",
                 state.generation, resp.generation
             );
             state.generation = resp.generation.clone();
             state.cursor = 0;
-            let refetched = match self.weir.fetch(0, self.batch_size).await {
+            let refetched = match self.symfynity.fetch(0, self.batch_size).await {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::warn!("weir refetch after generation change failed: {e}");
+                    tracing::warn!("symfynity refetch after generation change failed: {e}");
                     // Persist the new generation + reset cursor so we don't
                     // repeatedly reset; retry the fetch next cycle.
                     let _ = state.save(&self.state_file);
@@ -806,7 +806,7 @@ mod tests {
     struct Harness {
         _dir: tempfile::TempDir,
         state_file: PathBuf,
-        weir: MockServer,
+        symfynity: MockServer,
         backend: MockServer,
     }
 
@@ -816,14 +816,14 @@ mod tests {
         Harness {
             _dir: dir,
             state_file,
-            weir: MockServer::start().await,
+            symfynity: MockServer::start().await,
             backend: MockServer::start().await,
         }
     }
 
     fn forwarder(h: &Harness, batch_size: usize) -> Forwarder {
         Forwarder {
-            weir: WeirClient::new(format!("{}/events", h.weir.uri()), Duration::from_secs(5)),
+            symfynity: SymfynityClient::new(format!("{}/events", h.symfynity.uri()), Duration::from_secs(5)),
             backend: BackendClient::new(
                 format!("{}/v1/ingest", h.backend.uri()),
                 "sk".into(),
@@ -835,12 +835,12 @@ mod tests {
         }
     }
 
-    async fn weir_returns(h: &Harness, generation: &str, events: serde_json::Value) {
+    async fn symfynity_returns(h: &Harness, generation: &str, events: serde_json::Value) {
         Mock::given(method("GET")).and(path("/events"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "generation": generation, "events": events
             })))
-            .mount(&h.weir).await;
+            .mount(&h.symfynity).await;
     }
 
     async fn backend_accepts(h: &Harness) {
@@ -852,7 +852,7 @@ mod tests {
     #[tokio::test]
     async fn forwards_and_advances_cursor() {
         let h = harness().await;
-        weir_returns(&h, "gen-1", json!([{"id": 5}, {"id": 6}])).await;
+        symfynity_returns(&h, "gen-1", json!([{"id": 5}, {"id": 6}])).await;
         backend_accepts(&h).await;
         let f = forwarder(&h, 500);
         let mut state = AgentState::default();
@@ -868,7 +868,7 @@ mod tests {
     #[tokio::test]
     async fn empty_response_is_idle_and_holds_cursor() {
         let h = harness().await;
-        weir_returns(&h, "gen-1", json!([])).await;
+        symfynity_returns(&h, "gen-1", json!([])).await;
         let f = forwarder(&h, 500);
         let mut state = AgentState { generation: "gen-1".into(), cursor: 9 };
         assert_eq!(f.run_cycle(&mut state).await, CycleOutcome::Idle);
@@ -878,7 +878,7 @@ mod tests {
     #[tokio::test]
     async fn full_batch_signals_more() {
         let h = harness().await;
-        weir_returns(&h, "gen-1", json!([{"id": 1}, {"id": 2}])).await;
+        symfynity_returns(&h, "gen-1", json!([{"id": 1}, {"id": 2}])).await;
         backend_accepts(&h).await;
         let f = forwarder(&h, 2); // batch_size == returned count
         let mut state = AgentState { generation: "gen-1".into(), cursor: 0 };
@@ -891,7 +891,7 @@ mod tests {
     #[tokio::test]
     async fn backend_failure_holds_cursor() {
         let h = harness().await;
-        weir_returns(&h, "gen-1", json!([{"id": 5}])).await;
+        symfynity_returns(&h, "gen-1", json!([{"id": 5}])).await;
         Mock::given(method("POST")).and(path("/v1/ingest"))
             .respond_with(ResponseTemplate::new(500))
             .mount(&h.backend).await;
@@ -903,12 +903,12 @@ mod tests {
 
     #[tokio::test]
     async fn generation_change_resets_cursor() {
-        // Weir restarted: stored generation gen-OLD/cursor 100, but Weir now
+        // SymFynity restarted: stored generation gen-OLD/cursor 100, but SymFynity now
         // reports gen-NEW with low ids. The agent must reset and forward from 0.
         let h = harness().await;
         // First (since=100) and refetch (since=0) both hit the same mock,
         // which always returns gen-NEW with a low id.
-        weir_returns(&h, "gen-NEW", json!([{"id": 2}])).await;
+        symfynity_returns(&h, "gen-NEW", json!([{"id": 2}])).await;
         backend_accepts(&h).await;
         let f = forwarder(&h, 500);
         let mut state = AgentState { generation: "gen-OLD".into(), cursor: 100 };
@@ -945,7 +945,7 @@ git commit -m "feat: forwarder poll cycle with restart detection and at-least-on
 - Modify: `src/main.rs`
 
 **Interfaces:**
-- Consumes: `Config` (Task 2), `AgentState` (Task 3), `WeirClient`/`BackendClient` (Tasks 4/5), `Forwarder`/`CycleOutcome` (Task 6).
+- Consumes: `Config` (Task 2), `AgentState` (Task 3), `SymfynityClient`/`BackendClient` (Tasks 4/5), `Forwarder`/`CycleOutcome` (Task 6).
 - Produces: the runnable binary — loads config (fatal on error), builds the forwarder, loads state, runs the poll loop with drain + interval sleep, until Ctrl+C/SIGTERM.
 
 - [ ] **Step 1: Replace `src/main.rs`**
@@ -953,13 +953,13 @@ git commit -m "feat: forwarder poll cycle with restart detection and at-least-on
 ```rust
 use std::time::Duration;
 
-use weir_agent::backend::BackendClient;
-use weir_agent::config::Config;
-use weir_agent::forwarder::{CycleOutcome, Forwarder};
-use weir_agent::state::AgentState;
-use weir_agent::weir::WeirClient;
+use symfynity_agent::backend::BackendClient;
+use symfynity_agent::config::Config;
+use symfynity_agent::forwarder::{CycleOutcome, Forwarder};
+use symfynity_agent::state::AgentState;
+use symfynity_agent::symfynity::SymfynityClient;
 
-// Per-request timeout for the Weir and backend HTTP calls.
+// Per-request timeout for the SymFynity and backend HTTP calls.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[tokio::main]
@@ -969,18 +969,18 @@ async fn main() {
     let config = match Config::from_env() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("weir-agent config error: {e}");
+            eprintln!("symfynity-agent config error: {e}");
             std::process::exit(1);
         }
     };
     tracing::info!(
-        "weir-agent starting: events_url={}, backend_url={}, instance_id={}, interval={}s, batch={}",
+        "symfynity-agent starting: events_url={}, backend_url={}, instance_id={}, interval={}s, batch={}",
         config.events_url, config.backend_url, config.instance_id,
         config.poll_interval.as_secs(), config.batch_size
     );
 
     let forwarder = Forwarder {
-        weir: WeirClient::new(config.events_url.clone(), HTTP_TIMEOUT),
+        symfynity: SymfynityClient::new(config.events_url.clone(), HTTP_TIMEOUT),
         backend: BackendClient::new(config.backend_url.clone(), config.org_key.clone(), HTTP_TIMEOUT),
         instance_id: config.instance_id.clone(),
         batch_size: config.batch_size,
@@ -1044,7 +1044,7 @@ Run: `cargo build`
 Expected: 0 errors.
 
 Run (should exit non-zero with a config error, proving fail-fast):
-`cargo run 2>&1 | head -3` (no env set → prints "weir-agent config error: missing required config: WEIR_AGENT_BACKEND_URL" and exits 1). Confirm, then move on. Do NOT leave a process running.
+`cargo run 2>&1 | head -3` (no env set → prints "symfynity-agent config error: missing required config: SYMFYNITY_AGENT_BACKEND_URL" and exits 1). Confirm, then move on. Do NOT leave a process running.
 
 - [ ] **Step 3: Commit**
 
@@ -1061,7 +1061,7 @@ git commit -m "feat: wire config, forwarder, and poll loop with graceful shutdow
 - Create: `tests/forwarder_test.rs`
 
 **Interfaces:**
-- Consumes: the public crate API (`Forwarder`, `WeirClient`, `BackendClient`, `AgentState`, `CycleOutcome`).
+- Consumes: the public crate API (`Forwarder`, `SymfynityClient`, `BackendClient`, `AgentState`, `CycleOutcome`).
 
 - [ ] **Step 1: Write the test**
 
@@ -1073,12 +1073,12 @@ use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use weir_agent::backend::BackendClient;
-use weir_agent::forwarder::{CycleOutcome, Forwarder};
-use weir_agent::state::AgentState;
-use weir_agent::weir::WeirClient;
+use symfynity_agent::backend::BackendClient;
+use symfynity_agent::forwarder::{CycleOutcome, Forwarder};
+use symfynity_agent::state::AgentState;
+use symfynity_agent::symfynity::SymfynityClient;
 
-// A full drain cycle: Weir returns a full batch then a partial, the agent
+// A full drain cycle: SymFynity returns a full batch then a partial, the agent
 // forwards both, advances the cursor, and persists it — verified against a
 // real (mock) backend and a real state file on disk.
 #[tokio::test]
@@ -1086,7 +1086,7 @@ async fn drains_backlog_across_cycles_and_persists() {
     let dir = tempfile::tempdir().unwrap();
     let state_file = dir.path().join("state.json");
 
-    let weir = MockServer::start().await;
+    let symfynity = MockServer::start().await;
     // since=0 -> two events (full batch of 2, so `more`)
     Mock::given(method("GET")).and(path("/events"))
         .and(wiremock::matchers::query_param("since", "0"))
@@ -1095,7 +1095,7 @@ async fn drains_backlog_across_cycles_and_persists() {
             "events": [ {"id": 1, "tenant": "a", "outcome": "completed"},
                         {"id": 2, "tenant": "b", "outcome": "budget_blocked"} ]
         })))
-        .mount(&weir).await;
+        .mount(&symfynity).await;
     // since=2 -> one event (partial, so drain ends)
     Mock::given(method("GET")).and(path("/events"))
         .and(wiremock::matchers::query_param("since", "2"))
@@ -1103,7 +1103,7 @@ async fn drains_backlog_across_cycles_and_persists() {
             "generation": "gen-1",
             "events": [ {"id": 3, "tenant": "c", "outcome": "completed"} ]
         })))
-        .mount(&weir).await;
+        .mount(&symfynity).await;
 
     let backend = MockServer::start().await;
     Mock::given(method("POST")).and(path("/v1/ingest"))
@@ -1111,7 +1111,7 @@ async fn drains_backlog_across_cycles_and_persists() {
         .mount(&backend).await;
 
     let f = Forwarder {
-        weir: WeirClient::new(format!("{}/events", weir.uri()), Duration::from_secs(5)),
+        symfynity: SymfynityClient::new(format!("{}/events", symfynity.uri()), Duration::from_secs(5)),
         backend: BackendClient::new(format!("{}/v1/ingest", backend.uri()), "sk".into(), Duration::from_secs(5)),
         instance_id: "inst".into(),
         batch_size: 2,
@@ -1151,43 +1151,43 @@ git commit -m "test: end-to-end drain + persist against wiremock stubs"
 ### Task 9: README + example env
 
 **Files:**
-- Create: `README.md`, `weir-agent.example.env`
+- Create: `README.md`, `symfynity-agent.example.env`
 
 **Interfaces:** none — docs only.
 
-- [ ] **Step 1: Create `weir-agent.example.env`**
+- [ ] **Step 1: Create `symfynity-agent.example.env`**
 
 ```bash
-# weir-agent configuration (copy to a private .env; NEVER commit real secrets)
+# symfynity-agent configuration (copy to a private .env; NEVER commit real secrets)
 
 # Required
-WEIR_AGENT_BACKEND_URL=https://ingest.example.com/v1/ingest
-WEIR_AGENT_ORG_KEY=replace-with-your-org-api-key
-WEIR_AGENT_INSTANCE_ID=prod-us-east
+SYMFYNITY_AGENT_BACKEND_URL=https://ingest.example.com/v1/ingest
+SYMFYNITY_AGENT_ORG_KEY=replace-with-your-org-api-key
+SYMFYNITY_AGENT_INSTANCE_ID=prod-us-east
 
 # Optional (defaults shown)
-WEIR_AGENT_EVENTS_URL=http://localhost:8080/events
-WEIR_AGENT_POLL_INTERVAL_SECS=15
-WEIR_AGENT_BATCH_SIZE=500
-WEIR_AGENT_STATE_FILE=./weir-agent-state.json
+SYMFYNITY_AGENT_EVENTS_URL=http://localhost:8080/events
+SYMFYNITY_AGENT_POLL_INTERVAL_SECS=15
+SYMFYNITY_AGENT_BATCH_SIZE=500
+SYMFYNITY_AGENT_STATE_FILE=./symfynity-agent-state.json
 ```
 
 - [ ] **Step 2: Create `README.md`**
 
-Write a concise README covering: what weir-agent is (a closed-source companion that forwards Weir's `/events` usage metadata to the hosted backend; metadata only, never content or tool arguments); how it works (poll loop, `(generation, cursor)` state, restart detection, at-least-once with backend dedup on `(instance_id, generation, id)`); configuration (the env-var table from the plan / example env); running it (`cargo run` with the env vars set, one agent per Weir instance); and the ingestion contract it targets (`POST` with bearer key and `{instance_id, generation, events}` body). Keep it accurate to what was built — do not document features not in the code (no alerting, no Docker image yet).
+Write a concise README covering: what symfynity-agent is (a closed-source companion that forwards SymFynity's `/events` usage metadata to the hosted backend; metadata only, never content or tool arguments); how it works (poll loop, `(generation, cursor)` state, restart detection, at-least-once with backend dedup on `(instance_id, generation, id)`); configuration (the env-var table from the plan / example env); running it (`cargo run` with the env vars set, one agent per SymFynity instance); and the ingestion contract it targets (`POST` with bearer key and `{instance_id, generation, events}` body). Keep it accurate to what was built — do not document features not in the code (no alerting, no Docker image yet).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add README.md weir-agent.example.env
-git commit -m "docs: README and example env for weir-agent"
+git add README.md symfynity-agent.example.env
+git commit -m "docs: README and example env for symfynity-agent"
 ```
 
 ---
 
 ## Self-Review Notes
 
-- **Spec coverage:** config + fail-fast (Task 2), atomic restart-safe state (Task 3), Weir `/events` client with verbatim opaque events (Task 4), backend ingest client matching the contract (Task 5), poll cycle with restart detection + at-least-once + drain + failure handling (Task 6), main loop + graceful shutdown (Task 7), end-to-end wiremock test (Task 8), docs (Task 9). Packaging (Docker) and the backend itself are out of scope per the spec.
-- **Type consistency:** `AgentState` (state.rs) is used by the forwarder and persisted; `EventsResponse`/`max_event_id` (weir.rs) feed the forwarder; `BackendClient::ingest` signature `(instance_id, generation, events)` matches the contract body and the forwarder's call. `CycleOutcome` defined once (forwarder.rs), consumed by main.
+- **Spec coverage:** config + fail-fast (Task 2), atomic restart-safe state (Task 3), SymFynity `/events` client with verbatim opaque events (Task 4), backend ingest client matching the contract (Task 5), poll cycle with restart detection + at-least-once + drain + failure handling (Task 6), main loop + graceful shutdown (Task 7), end-to-end wiremock test (Task 8), docs (Task 9). Packaging (Docker) and the backend itself are out of scope per the spec.
+- **Type consistency:** `AgentState` (state.rs) is used by the forwarder and persisted; `EventsResponse`/`max_event_id` (symfynity.rs) feed the forwarder; `BackendClient::ingest` signature `(instance_id, generation, events)` matches the contract body and the forwarder's call. `CycleOutcome` defined once (forwarder.rs), consumed by main.
 - **Privacy line:** events are `serde_json::Value` forwarded verbatim; only `id` is read (via `max_event_id`); no event body is logged. `.env` and state file are gitignored.
 - **At-least-once correctness:** the cursor advances only after a 2xx from the backend; a persist failure after a successful ingest is logged and tolerated (backend dedupes). Generation change resets the cursor to 0 and re-fetches so new-process events aren't skipped.

@@ -4,12 +4,12 @@ use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use weir_agent::backend::BackendClient;
-use weir_agent::forwarder::{CycleOutcome, Forwarder};
-use weir_agent::state::AgentState;
-use weir_agent::weir::WeirClient;
+use symfynity_agent::backend::BackendClient;
+use symfynity_agent::forwarder::{CycleOutcome, Forwarder};
+use symfynity_agent::state::AgentState;
+use symfynity_agent::symfynity::SymfynityClient;
 
-// A full drain cycle: Weir returns a full batch then a partial, the agent
+// A full drain cycle: SymFynity returns a full batch then a partial, the agent
 // forwards both, advances the cursor, and persists it — verified against a
 // real (mock) backend and a real state file on disk.
 #[tokio::test]
@@ -17,7 +17,7 @@ async fn drains_backlog_across_cycles_and_persists() {
     let dir = tempfile::tempdir().unwrap();
     let state_file = dir.path().join("state.json");
 
-    let weir = MockServer::start().await;
+    let symfynity = MockServer::start().await;
     // since=0 -> two events (full batch of 2, so `more`)
     Mock::given(method("GET")).and(path("/events"))
         .and(wiremock::matchers::query_param("since", "0"))
@@ -26,7 +26,7 @@ async fn drains_backlog_across_cycles_and_persists() {
             "events": [ {"id": 1, "tenant": "a", "outcome": "completed"},
                         {"id": 2, "tenant": "b", "outcome": "budget_blocked"} ]
         })))
-        .mount(&weir).await;
+        .mount(&symfynity).await;
     // since=2 -> one event (partial, so drain ends)
     Mock::given(method("GET")).and(path("/events"))
         .and(wiremock::matchers::query_param("since", "2"))
@@ -34,7 +34,7 @@ async fn drains_backlog_across_cycles_and_persists() {
             "generation": "gen-1",
             "events": [ {"id": 3, "tenant": "c", "outcome": "completed"} ]
         })))
-        .mount(&weir).await;
+        .mount(&symfynity).await;
 
     let backend = MockServer::start().await;
     Mock::given(method("POST")).and(path("/v1/ingest"))
@@ -42,7 +42,7 @@ async fn drains_backlog_across_cycles_and_persists() {
         .mount(&backend).await;
 
     let f = Forwarder {
-        weir: WeirClient::new(format!("{}/events", weir.uri()), Duration::from_secs(5)),
+        symfynity: SymfynityClient::new(format!("{}/events", symfynity.uri()), Duration::from_secs(5)),
         backend: BackendClient::new(format!("{}/v1/ingest", backend.uri()), "sk".into(), Duration::from_secs(5)),
         instance_id: "inst".into(),
         batch_size: 2,

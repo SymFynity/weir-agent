@@ -1,20 +1,20 @@
-# weir-agent
+# symfynity-agent
 
-A small Rust binary that polls a local [Weir](https://github.com/SymFynity/weir-proxy)
-instance and forwards per-request usage metadata to a backend. One agent per Weir
+A small Rust binary that polls a local [SymFynity](https://github.com/SymFynity/symfynity)
+instance and forwards per-request usage metadata to a backend. One agent per SymFynity
 instance.
 
-Weir enforces budgets and policy on a single instance and keeps its event log in
-memory. weir-agent is what gets that data off the box — to
-[SymFynity](https://symfynity.com), or to any endpoint you point it at.
+SymFynity enforces budgets and policy on a single instance and keeps its event log in
+memory. symfynity-agent is what gets that data off the box — to
+[SymFynity Cloud](https://symfynity.com), or to any endpoint you point it at.
 
 ## What it sends — and what it never sends
 
-weir-agent forwards **metadata only**: tenant, provider, model, tool *names*,
+symfynity-agent forwards **metadata only**: tenant, provider, model, tool *names*,
 token counts, outcome, rule, and timestamp.
 
 It never sends prompt content, response content, or tool call arguments. Those
-never leave your Weir process, because Weir's `/events` endpoint does not expose
+never leave your SymFynity process, because SymFynity's `/events` endpoint does not expose
 them in the first place — there is nothing here to opt out of.
 
 The source is published so that claim is checkable rather than promised. It's
@@ -22,9 +22,9 @@ about 800 lines of Rust; read it, build it, run your own.
 
 ## Use it with your own backend
 
-Nothing about the agent is SymFynity-specific. It POSTs a documented JSON
+Nothing about the agent is SymFynity Cloud-specific. It POSTs a documented JSON
 contract (see [Ingestion contract](#ingestion-contract)) to whatever
-`WEIR_AGENT_BACKEND_URL` names. Point it at your own collector and it works the
+`SYMFYNITY_AGENT_BACKEND_URL` names. Point it at your own collector and it works the
 same way.
 
 The agent is deliberately simple: no alerting, no aggregation, no policy logic.
@@ -32,16 +32,16 @@ It polls, forwards, and tracks a cursor. Everything else is the backend's job.
 
 ## Quick start
 
-Requires a recent stable Rust toolchain, and a Weir instance to poll.
+Requires a recent stable Rust toolchain, and a SymFynity instance to poll.
 
 ```bash
-git clone https://github.com/SymFynity/weir-agent
-cd weir-agent
+git clone https://github.com/SymFynity/symfynity-agent
+cd symfynity-agent
 cargo build --release
 
-cp weir-agent.example.env .env   # set BACKEND_URL, ORG_KEY, INSTANCE_ID
+cp symfynity-agent.example.env .env   # set BACKEND_URL, ORG_KEY, INSTANCE_ID
 set -a && source .env && set +a
-RUST_LOG=info ./target/release/weir-agent
+RUST_LOG=info ./target/release/symfynity-agent
 ```
 
 The agent logs startup config and cycle outcomes to stderr, and shuts down
@@ -49,22 +49,22 @@ gracefully on Ctrl+C or SIGTERM.
 
 ## Configuration
 
-All configuration is via environment variables. See `weir-agent.example.env`
+All configuration is via environment variables. See `symfynity-agent.example.env`
 for a template.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `WEIR_AGENT_BACKEND_URL` | Yes | — | Ingestion endpoint URL |
-| `WEIR_AGENT_ORG_KEY` | Yes | — | Bearer token for backend authentication |
-| `WEIR_AGENT_INSTANCE_ID` | Yes | — | Identifier for this Weir instance (e.g. `prod-us-east`) |
-| `WEIR_AGENT_EVENTS_URL` | No | `http://localhost:8080/events` | Weir `/events` endpoint URL |
-| `WEIR_AGENT_POLL_INTERVAL_SECS` | No | `15` | Seconds to sleep between poll cycles when idle |
-| `WEIR_AGENT_BATCH_SIZE` | No | `500` | Max events per backend POST |
-| `WEIR_AGENT_STATE_FILE` | No | `./weir-agent-state.json` | Path to persist cursor & generation |
+| `SYMFYNITY_AGENT_BACKEND_URL` | Yes | — | Ingestion endpoint URL |
+| `SYMFYNITY_AGENT_ORG_KEY` | Yes | — | Bearer token for backend authentication |
+| `SYMFYNITY_AGENT_INSTANCE_ID` | Yes | — | Identifier for this SymFynity instance (e.g. `prod-us-east`) |
+| `SYMFYNITY_AGENT_EVENTS_URL` | No | `http://localhost:8080/events` | SymFynity `/events` endpoint URL |
+| `SYMFYNITY_AGENT_POLL_INTERVAL_SECS` | No | `15` | Seconds to sleep between poll cycles when idle |
+| `SYMFYNITY_AGENT_BATCH_SIZE` | No | `500` | Max events per backend POST |
+| `SYMFYNITY_AGENT_STATE_FILE` | No | `./symfynity-agent-state.json` | Path to persist cursor & generation |
 
 Missing required variables cause a fatal startup error with a clear message.
 
-The directory containing `WEIR_AGENT_STATE_FILE` must already exist — the agent
+The directory containing `SYMFYNITY_AGENT_STATE_FILE` must already exist — the agent
 does not create it — and persist failures are logged as warnings rather than
 being fatal, so run with logging enabled to notice them.
 
@@ -72,9 +72,9 @@ being fatal, so run with logging enabled to notice them.
 
 ### Poll cycle
 
-1. **Fetch** — `GET /events?since=<cursor>&limit=<batch_size>` from Weir.
+1. **Fetch** — `GET /events?since=<cursor>&limit=<batch_size>` from SymFynity.
 2. **Restart detection** — if the response `generation` differs from the
-   persisted one, Weir has restarted and its event IDs have reset. Reset the
+   persisted one, SymFynity has restarted and its event IDs have reset. Reset the
    cursor to 0 and refetch from the beginning of the new process.
 3. **Ingest** — POST the batch to the backend with the instance ID, generation,
    and events.
@@ -92,21 +92,21 @@ The agent guarantees at-least-once delivery of each event:
 - **The backend must deduplicate on `(instance_id, generation, event.id)`** to
   achieve exactly-once semantics.
 - Events are lost only if the agent is offline long enough that they age out of
-  Weir's bounded in-memory ring buffer.
+  SymFynity's bounded in-memory ring buffer.
 
 ### Backoff & drain
 
 If a batch comes back full, the agent cycles immediately to check for more
 (drain mode). If it's empty or short, the agent sleeps for the poll interval. On
-transient failures — Weir or the backend unreachable — it backs off to the same
+transient failures — SymFynity or the backend unreachable — it backs off to the same
 interval sleep.
 
 ## Ingestion contract
 
 **Method & auth:**
 
-- `POST <WEIR_AGENT_BACKEND_URL>`
-- `Authorization: Bearer <WEIR_AGENT_ORG_KEY>`
+- `POST <SYMFYNITY_AGENT_BACKEND_URL>`
+- `Authorization: Bearer <SYMFYNITY_AGENT_ORG_KEY>`
 
 **Body:**
 
@@ -123,7 +123,7 @@ interval sleep.
 }
 ```
 
-Events are the raw Weir `UsageEvent` JSON, forwarded verbatim. The backend must
+Events are the raw SymFynity `UsageEvent` JSON, forwarded verbatim. The backend must
 treat any 2xx (200, 202, 204) as a successful ingest.
 
 ## State & cursor
@@ -135,7 +135,7 @@ ingest:
 { "generation": "abc123", "cursor": 42 }
 ```
 
-- **generation** — snapshot of Weir's process generation when the cursor was last
+- **generation** — snapshot of SymFynity's process generation when the cursor was last
   updated. Used to detect restarts.
 - **cursor** — the ID of the highest event successfully forwarded. The next poll
   requests events `since` this ID.
@@ -154,7 +154,7 @@ cargo build --release
 
 Business Source License 1.1 — see [`LICENSE`](LICENSE).
 
-weir-agent is source-available, not open source. Running it in production inside
+symfynity-agent is source-available, not open source. Running it in production inside
 your own organisation is free and always will be — the Additional Use Grant
 covers internal production use explicitly. You can read, modify, fork, and
 self-host it, and point it at your own collector instead of ours. The one
@@ -164,5 +164,6 @@ competing with SymFynity's paid product.
 Four years after any given version is published, that version becomes available
 under the Apache License 2.0 automatically.
 
-weir-agent 0.1.0 was published under Apache License 2.0 and remains available
-under those terms. The Business Source License applies from 0.2.0 onward.
+Versions 0.1.0 and 0.2.0 were published under the name weir-agent; 0.1.0 was
+Apache License 2.0 and remains available under those terms. The Business Source
+License applies from 0.2.0 onward, and the SymFynity name from 0.3.0.
